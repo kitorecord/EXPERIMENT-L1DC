@@ -1,0 +1,89 @@
+import os
+import json
+from monai.transforms import (
+    Compose,
+    LoadImaged,
+    EnsureChannelFirstd,
+    ScaleIntensityRanged,
+    CropForegroundd,
+    RandCropByPosNegLabeld,
+    Orientationd,
+    Spacingd,
+    ToTensord
+)
+from monai.data import Dataset, DataLoader
+
+def get_transforms(mode="train"):
+    """
+    Define las transformaciones (Augmentations) para MONAI.
+    """
+    # 1. Transformaciones base (siempre se hacen)
+    transforms = [
+        LoadImaged(keys=["image", "label"]),
+        EnsureChannelFirstd(keys=["image", "label"]),
+        Orientationd(keys=["image", "label"], axcodes="RAS"),
+        # Aseguramos espaciado 1x1x1
+        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
+        # Normalización de intensidad (HU de pulmón -1000 a 400 -> 0.0 a 1.0)
+        ScaleIntensityRanged(
+            keys=["image"], a_min=-1000, a_max=400,
+            b_min=0.0, b_max=1.0, clip=True,
+        ),
+        # Recortar el fondo negro inútil para ahorrar memoria RAM
+        CropForegroundd(keys=["image", "label"], source_key="image"),
+    ]
+
+    # 2. Transformaciones SOLO para entrenamiento (Random Crops)
+    if mode == "train":
+        transforms.extend([
+            # ESTRATEGIA CLAVE PARA CPU:
+            # En lugar de usar la imagen entera, sacamos 2 parches de 96x96x96
+            # Asegurando que al menos 1 tenga un nódulo (pos=1) y otro sea fondo (neg=1)
+            RandCropByPosNegLabeld(
+                keys=["image", "label"],
+                label_key="label",
+                spatial_size=(96, 96, 96),
+                pos=1,
+                neg=1,
+                num_samples=2, # Sacamos 2 muestras por paciente
+                image_key="image",
+                image_threshold=0,
+            ),
+        ])
+    
+    # 3. Convertir a Tensor de PyTorch
+    transforms.append(ToTensord(keys=["image", "label"]))
+    
+    return Compose(transforms)
+
+def get_dataloader(data_dir, split_json="dataset_split.json", batch_size=2):
+    """
+    Crea los DataLoaders de PyTorch listos para entrenar.
+    """
+    json_path = os.path.join(data_dir, split_json)
+    
+    # Verificar que exista el JSON de splits
+    if not os.path.exists(json_path):
+        raise FileNotFoundError(f"No se encontró {json_path}. Ejecuta primero src/data/create_splits.py")
+
+    with open(json_path, "r") as f:
+        data = json.load(f)
+        
+    train_files = [
+        {"image": os.path.join(data_dir, x["image"]), "label": os.path.join(data_dir, x["label"])}
+        for x in data["training"]
+    ]
+    val_files = [
+        {"image": os.path.join(data_dir, x["image"]), "label": os.path.join(data_dir, x["label"])}
+        for x in data["validation"]
+    ]
+    
+    # Dataset normal (No CacheDataset para no saturar RAM inicial)
+    train_ds = Dataset(data=train_files, transform=get_transforms("train"))
+    val_ds = Dataset(data=val_files, transform=get_transforms("val"))
+    
+    # Num_workers=0 es más seguro para debuguear errores en CPU
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=0)
+    
+    return train_loader, val_loader
