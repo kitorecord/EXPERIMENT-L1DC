@@ -1,0 +1,28 @@
+# --- 1. CARPETAS DE ENTORNO Y SISTEMA ---
+.venv/
+venv/
+env/
+.env
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+
+# --- 2. CARPETAS DE DATOS Y EXPERIMENTOS (NO SUBIR) ---
+data/
+src_backup_v1/
+results_batch/
+experiments/
+
+# --- 3. ARCHIVOS DE RESPALDO Y LOGS (NO SUBIR) ---
+*.tar.gz
+*.log
+*.csv
+*.png
+# (Excepción: si quieres subir algún png de documentación, quita la línea *.png)
+
+# --- 4. EXTENSIONES DE MODELOS Y DATOS ---
+*.dcm
+*.npy
+*.npz
+*.h5
+*.pth
